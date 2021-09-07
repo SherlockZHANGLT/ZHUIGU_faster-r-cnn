@@ -16,7 +16,7 @@ device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 model = torchvision.models.detection.fasterrcnn_resnet50_fpn(pretrained=False,num_classes=10)
 # For training
-json_dir = '../MaskRcnn/data/detection_ver190129.json'
+json_dir = 'detection_ver190129.json'
 file = open(json_dir, 'r', encoding='utf-8')
 s = json.load(file)
 file.close()
@@ -75,9 +75,9 @@ for epoch in range(30):
 
         lr_scheduler = utils.warmup_lr_scheduler(optimizer, warmup_iters, warmup_factor)
     
-    for m in range(30):
-        image = images[m*15:(m+1)*15-1]
-        target = targets[m*15:(m+1)*15-1]
+    for m in range(45):
+        image = images[m*10:(m+1)*10-2]
+        target = targets[m*10:(m+1)*10-2]
         loss_dict = model(image, target)
         losses = sum(loss for loss in loss_dict.values())
         # reduce losses over all GPUs for logging purposes
@@ -92,9 +92,94 @@ for epoch in range(30):
         losses.backward()
         optimizer.step()
         lr_scheduler.step()
-    print("epoch"+str(epoch)+"finished")
-    
+        if(m ==44):
+            print("finish_"+str(epoch))
+            print("loss:"+str(losses))
+    model.eval()
+    error=0
+    s=0
+    for m in range(450):
+        if m % 10 != 0:
+            x=dataset.image_info[m]['image']
+            mmask=dataset.image_info[m]['mask']
+            x=Image.to_torch(x)
+            test_images=[]
+            test_images.append(x.to(device))
+            predictions = model(test_images)
+            for pre in predictions:
+                box=pre['boxes'].cuda().cpu().detach().numpy()
+                labels = pre['labels'].cuda().cpu().detach().numpy()
+                scores=pre['scores'].cuda().cpu().detach().numpy()
+                num=[-1,-1,-1,-1,-1,-1,-1,-1,-1]
+                num=np.array(num)
+                for i in range(len(box)):
+                    if(scores[i]<50):
+                        continue
+                    elif(num[labels[i]-1]==-1):
+                        num[labels[i]-1]=i
+                    elif (scores[i]>scores[num[labels[i]-1]]):
+                        num[labels[i]-1]=i
+                for i in range(9):
+                    if(num[i] != -1):
+                        bbox=mmask[int(box[num[i]][0]):int(box[num[i]][2]),int(box[num[i]][1]):int(box[num[i]][3])]
+                        bbox=bbox.flatten()
+                        bbox=bbox.tolist()
+                        if(max(bbox,key=bbox.count) != i+1):
+                            error=error+1
+                        s=s+1
+    if(s):
+        print("finish_"+str(epoch)+"_ :"+str(1-error/s))
+    else:
+        print("finish_"+str(epoch)+"_not found!")
 print('finish training')
+
+model.eval()
+error=0
+s=0
+for m in range(450):
+    if m % 10 !=0:
+        x=dataset.image_info[m]['image']
+        mmask=dataset.image_info[m]['mask']
+        x=Image.to_torch(x)
+        images=[]
+        images.append(x.to(device))
+        predictions = model(images)
+        for pre in predictions:
+            box=pre['boxes'].cuda().cpu().detach().numpy()
+            labels = pre['labels'].cuda().cpu().detach().numpy()
+            scores=pre['scores'].cuda().cpu().detach().numpy()
+            if m % 18 == 0 :
+                print(m)
+                print(labels)
+                print(scores)
+            num=[-1,-1,-1,-1,-1,-1,-1,-1,-1]
+            num=np.array(num)
+            for i in range(len(box)):
+                if(num[labels[i]-1]==-1):
+                    num[labels[i]-1]=i
+                elif (scores[i]>scores[num[labels[i]-1]]):
+                    num[labels[i]-1]=i
+            pic = dataset.image_info[m]['image']
+            pic=cv2.cvtColor(pic, cv2.COLOR_GRAY2BGR)
+            for i in range(9):
+                    if(num[i] != -1):
+                        bbox=mmask[int(box[num[i]][0]):int(box[num[i]][2]),int(box[num[i]][1]):int(box[num[i]][3])]
+                        bbox=bbox.flatten()
+                        bbox=bbox.tolist()
+                        if(max(bbox,key=bbox.count) != i+1):
+                            error=error+1
+                        s=s+1
+                        ptLeftTop = (int(box[num[i]][0]),int(box[num[i]][1]))  #（左上角x, 左上角y）
+                        ptRightBottom = (int(box[num[i]][2]), int(box[num[i]][3])) #（右下角x, 右下角y）
+                        point_color = (int(labels[i]*205/10), 0 , 255-int(labels[i]*205/10))  # RGB框的颜色，自定
+                        thickness = 1
+                        lineType = 4
+                        cv2.rectangle(pic, ptLeftTop, ptRightBottom, point_color, thickness, lineType)
+            cv2.imwrite("result/"+str(m)+".jpg", pic)  # 将画过矩形框的图片保存
+if(s):
+    print("test:"+str(1-error/s))
+else:
+    print("test:0!")
 '''
 import torch.optim as optim
 import torch.nn as nn
@@ -117,17 +202,18 @@ for epoch in range(10):  # loop over the dataset multiple times
         print('[%d] loss: %.3f' %
                 (epoch + 1, running_loss / 200))
 '''
+'''
 # For inference
-print(targets[0]['boxes'].cuda().cpu().numpy())
-print(targets[0]['labels'].cuda().cpu().numpy())
+#print(targets[0]['boxes'].cuda().cpu().numpy())
+#print(targets[0]['labels'].cuda().cpu().numpy())
 model.eval()
 x=dataset.image_info[0]['image']
 x=Image.to_torch(x)
 images=[]
 images.append(x.to(device))
 predictions = model(images)
-image = dataset.image_info[0]['image']
-image=cv2.cvtColor(image, cv2.COLOR_GRAY2BGR)
+pic = dataset.image_info[0]['image']
+pic=cv2.cvtColor(pic, cv2.COLOR_GRAY2BGR)
 for pre in predictions:
     box=pre['boxes'].cuda().cpu().detach().numpy()
     labels = pre['labels'].cuda().cpu().detach().numpy()
@@ -143,9 +229,9 @@ for pre in predictions:
             point_color = (int(labels[i]*205/10), 0 , 255-int(labels[i]*205/10))  # RGB框的颜色，自定
             thickness = 1
             lineType = 4
-            cv2.rectangle(image, ptLeftTop, ptRightBottom, point_color, thickness, lineType)
-cv2.imwrite("result.jpg", image)  # 将画过矩形框的图片保存
-    
+            cv2.rectangle(pic, ptLeftTop, ptRightBottom, point_color, thickness, lineType)
+cv2.imwrite("result.jpg", pic)  # 将画过矩形框的图片保存
+ '''   
 '''    
 # optionally, if you want to export the model to ONNX:
 torch.onnx.export(model, x, "faster_rcnn.onnx", opset_version = 11)      

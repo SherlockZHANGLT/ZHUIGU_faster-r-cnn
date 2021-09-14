@@ -25,6 +25,8 @@ all_patients = len(dataset.image_info)
 all_ids = np.arange(all_patients)
 images=[]
 targets = []
+ALL_COUNT=0
+ALL_COUNT_TEST=0
 for i in range(all_patients):
     image = dataset.image_info[i]['image']
     image=Image.to_torch(image)
@@ -40,6 +42,10 @@ for i in range(all_patients):
         #print(np.array(mask).shape)
         if mask.max() < 0.5:
             continue
+        if i % 10 != 9:
+            ALL_COUNT=ALL_COUNT+1
+        else:
+            ALL_COUNT_TEST=ALL_COUNT_TEST+1
         box=Image.extract_bboxes(mask)
         boxes.append(box)
         current_class = m+1
@@ -56,6 +62,8 @@ for i in range(all_patients):
     targets.append(d)
     
 model = model.cuda()
+print("ALL_COUNT : "+ str(ALL_COUNT))
+print("ALL_COUNT_TEST : "+ str(ALL_COUNT_TEST))
 
 import utils
 # construct an optimizer
@@ -65,7 +73,7 @@ params = [p for p in model.parameters() if p.requires_grad]
 optimizer = torch.optim.SGD(params, lr=0.0003,momentum=0.9, weight_decay=0.0005)
 lr_scheduler = torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(optimizer, T_0=1, T_mult=2)
 
-for epoch in range(30):
+for epoch in range(50):
     # train for one epoch, printing every 10 iterations
     # engine.py的train_one_epoch函数将images和targets都.to(device)了
     model.train()
@@ -99,7 +107,7 @@ for epoch in range(30):
     error=0
     s=0
     for m in range(450):
-        if m % 10 != 0:
+        if m % 10 != 9:
             x=dataset.image_info[m]['image']
             mmask=dataset.image_info[m]['mask']
             x=Image.to_torch(x)
@@ -113,7 +121,7 @@ for epoch in range(30):
                 num=[-1,-1,-1,-1,-1,-1,-1,-1,-1]
                 num=np.array(num)
                 for i in range(len(box)):
-                    if(scores[i]<50):
+                    if(scores[i]<0.5):
                         continue
                     elif(num[labels[i]-1]==-1):
                         num[labels[i]-1]=i
@@ -121,23 +129,62 @@ for epoch in range(30):
                         num[labels[i]-1]=i
                 for i in range(9):
                     if(num[i] != -1):
-                        bbox=mmask[int(box[num[i]][0]):int(box[num[i]][2]),int(box[num[i]][1]):int(box[num[i]][3])]
+                        bbox=mmask[int(box[num[i]][1]):int(box[num[i]][3])+1,int(box[num[i]][0]):int(box[num[i]][2])+1]
                         bbox=bbox.flatten()
                         bbox=bbox.tolist()
-                        if(max(bbox,key=bbox.count) != i+1):
+                        sho=max(bbox,key=bbox.count)
+                        if(sho != i+1):
                             error=error+1
                         s=s+1
-    if(s):
-        print("finish_"+str(epoch)+"_ :"+str(1-error/s))
+    if(s != 0):
+        print("finish_"+str(epoch)+"_ :"+str(1-error/s)+" finding "+ str(s)+"/"+str(ALL_COUNT))
     else:
         print("finish_"+str(epoch)+"_not found!")
+    error=0
+    s=0
+    for m in range(450):
+        if m % 10 == 9:
+            x=dataset.image_info[m]['image']
+            mmask=dataset.image_info[m]['mask']
+            x=Image.to_torch(x)
+            test_images=[]
+            test_images.append(x.to(device))
+            predictions = model(test_images)
+            for pre in predictions:
+                box=pre['boxes'].cuda().cpu().detach().numpy()
+                labels = pre['labels'].cuda().cpu().detach().numpy()
+                scores=pre['scores'].cuda().cpu().detach().numpy()
+                num=[-1,-1,-1,-1,-1,-1,-1,-1,-1]
+                num=np.array(num)
+                for i in range(len(box)):
+                    if(scores[i]<0.5):
+                        continue
+                    elif(num[labels[i]-1]==-1):
+                        num[labels[i]-1]=i
+                    elif (scores[i]>scores[num[labels[i]-1]]):
+                        num[labels[i]-1]=i
+                for i in range(9):
+                    if(num[i] != -1):
+                        bbox=mmask[int(box[num[i]][1]):int(box[num[i]][3])+1,int(box[num[i]][0]):int(box[num[i]][2])+1]
+                        bbox=bbox.flatten()
+                        bbox=bbox.tolist()
+                        sho=max(bbox,key=bbox.count)
+                        if(sho != i+1):
+                            error=error+1
+                        s=s+1
+    if(s != 0):
+        print("finish_test_"+str(epoch)+"_ :"+str(1-error/s)+" finding "+ str(s)+"/"+str(ALL_COUNT_TEST))
+    else:
+        print("finish_test_"+str(epoch)+"_not found!")
 print('finish training')
+PATH='state_dict_model.pt'
+torch.save(model.state_dict(),PATH)
 
 model.eval()
 error=0
 s=0
 for m in range(450):
-    if m % 10 !=0:
+    if m % 10 ==9:
         x=dataset.image_info[m]['image']
         mmask=dataset.image_info[m]['mask']
         x=Image.to_torch(x)
@@ -148,14 +195,15 @@ for m in range(450):
             box=pre['boxes'].cuda().cpu().detach().numpy()
             labels = pre['labels'].cuda().cpu().detach().numpy()
             scores=pre['scores'].cuda().cpu().detach().numpy()
-            if m % 18 == 0 :
-                print(m)
-                print(labels)
-                print(scores)
+            print(m)
+            print(labels)
+            print(scores)
             num=[-1,-1,-1,-1,-1,-1,-1,-1,-1]
             num=np.array(num)
             for i in range(len(box)):
-                if(num[labels[i]-1]==-1):
+                if(scores[i]<0.5):
+                    continue
+                elif(num[labels[i]-1]==-1):
                     num[labels[i]-1]=i
                 elif (scores[i]>scores[num[labels[i]-1]]):
                     num[labels[i]-1]=i
@@ -163,10 +211,13 @@ for m in range(450):
             pic=cv2.cvtColor(pic, cv2.COLOR_GRAY2BGR)
             for i in range(9):
                     if(num[i] != -1):
-                        bbox=mmask[int(box[num[i]][0]):int(box[num[i]][2]),int(box[num[i]][1]):int(box[num[i]][3])]
+                        bbox=mmask[int(box[num[i]][1]):int(box[num[i]][3])+1,int(box[num[i]][0]):int(box[num[i]][2])+1]
                         bbox=bbox.flatten()
                         bbox=bbox.tolist()
-                        if(max(bbox,key=bbox.count) != i+1):
+                        sho=max(bbox,key=bbox.count)
+                        print("label should be: "+str(i+1))
+                        print("the showing label is "+str(sho))
+                        if(sho != i+1):
                             error=error+1
                         s=s+1
                         ptLeftTop = (int(box[num[i]][0]),int(box[num[i]][1]))  #（左上角x, 左上角y）
@@ -175,11 +226,12 @@ for m in range(450):
                         thickness = 1
                         lineType = 4
                         cv2.rectangle(pic, ptLeftTop, ptRightBottom, point_color, thickness, lineType)
-            cv2.imwrite("result/"+str(m)+".jpg", pic)  # 将画过矩形框的图片保存
+            cv2.imwrite("test_result/"+str(m)+".jpg", pic)  # 将画过矩形框的图片保存
 if(s):
-    print("test:"+str(1-error/s))
+    print("test:"+str(1-error/s)+" finding "+ str(s)+"/"+str(ALL_COUNT_TEST))
 else:
     print("test:0!")
+ff.close()
 '''
 import torch.optim as optim
 import torch.nn as nn
